@@ -1,4 +1,4 @@
-import music_tools as mt
+import genmus.music_tools as mt
 import numpy as np
 
 

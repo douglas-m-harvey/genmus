@@ -1,8 +1,64 @@
 import numpy as np
+import sympy as sy
 from scipy.ndimage import gaussian_filter
 from scipy.signal import convolve
 from scipy.io.wavfile import write
 
+
+def generate_triangle_wave():
+    x, p = sy.symbols("x"), 2*sy.pi
+    y = (4/p)*sy.Abs(sy.Mod(x - p/4, p) - p/2) - 1
+    return sy.lambdify(x, y, "numpy")
+
+def generate_sawtooth_wave():
+    x, p = sy.symbols("x"), 2*sy.pi
+    y = 2*(x/p - sy.floor(1/2 + x/p))
+    return sy.lambdify(x, y, "numpy")
+
+def generate_square_wave():
+    x, p = sy.symbols("x"), 2*sy.pi
+    y = (-1)**sy.floor(2*x/p)
+    return sy.lambdify(x, y, "numpy")
+
+triangle_wave = generate_triangle_wave()
+sawtooth_wave = generate_sawtooth_wave()
+square_wave = generate_square_wave()
+
+
+class oscillator():
+    def __init__(self, waveform = "sine"):
+        musical_alphabet = ["C", "C#/Db", "D", "Eb/D#", "E", "F", "F#/Gb", "G", "Ab/G#", "A", "Bb/A#", "B"]
+        frequencies = [440*(2**((m - 69)/12)) for m in range(12, 120)]
+        self.notes_lut = {}
+        octaves = (np.floor(np.arange(12, 120)/12) - 1).astype(int)
+        for index, (frequency, octave) in enumerate(zip(frequencies, octaves)):
+            note = musical_alphabet[index%12] + str(octave)
+            self.notes_lut[note] = frequency
+        self.waveform = waveform
+    
+    def generate_pitch(self, note, duration, sampling_rate = 44100):
+        if note is not None:
+            return self.waveform(2*np.pi*notes_lut[note]*np.linspace(0, duration, int(sampling_rate*duration)))
+        else:
+            return np.zeros((int(sampling_rate*duration)))
+    
+    @property
+    def waveform(self):
+        return self._waveform
+    @waveform.setter
+    def waveform(self, waveform):
+        if waveform == "sine":
+            self._waveform = np.sin
+        elif waveform == "triangle":
+            self._waveform = triangle_wave
+        elif waveform == "sawtooth":
+            self._waveform = sawtooth_wave
+        elif waveform == "square":
+            self._waveform = square_wave
+        else:
+            raise Exception("Invalid waveform!")
+        
+        
 
 musical_alphabet = ["C", "C#/Db", "D", "Eb/D#", "E", "F", "F#/Gb", "G", "Ab/G#", "A", "Bb/A#", "B"]
 frequencies = [440*(2**((m - 69)/12)) for m in range(12, 120)]
@@ -15,6 +71,20 @@ for index, frequency in enumerate(frequencies):
     note = musical_alphabet[index] + str(octave)
     notes_lut[note] = frequency
 notes_full_arr = np.array(list(notes_lut.keys()))
+
+def generate_pitch(note, duration,  oscillator_type = "sine", sampling_rate = 44100):
+    if note is not None:
+        x = 2*np.pi*notes_lut[note]*np.linspace(0, duration, int(sampling_rate*duration))
+        if oscillator_type == "sine":
+            return np.sin(x)
+        elif oscillator_type == "triangle":
+            return triangle_wave(x)
+        elif oscillator_type == "sawtooth":
+            return sawtooth_wave(x)
+        elif oscillator_type == "square":
+            return square_wave(x)
+    else:
+        return np.zeros((int(sampling_rate*duration)))
 
 def semitone_shift(note, semitones):
     if note is not None:
@@ -33,12 +103,6 @@ def harmonics_calculator(base_frequncy, no_harmonics):
                 harmonic_note = note
         harmonics.append((harmonic_note, harmonic_frequency, notes_lut[harmonic_note]))
     return harmonics
-
-def generate_pitch(note, duration, sampling_rate = 44100):
-    if note is not None:
-        return np.sin(2*np.pi*notes_lut[note]*np.linspace(0, duration, int(sampling_rate*duration)))
-    else:
-        return np.zeros((int(sampling_rate*duration)))
     
 def wobbly_piano(note_0, note_1, duration, filter_width, sample_rate):
     if note_0 is not None and note_1 is not None:
@@ -75,7 +139,7 @@ def adsr(a = 1, d = 1, s = 1, r = 1, s_level = 0.5, duration = 1, amplitude = 1,
     else:
         return np.zeros(1)
 
-def convert_bars(bars_input, note_values_input, bpm = 90, time_signature = (4, 4), semitones = 0):
+def convert_bars(bars_input, note_values_input, oscillator_types_input, bpm = 90, time_signature = (4, 4), semitones = 0):
     for note_values_index, note_values in enumerate(note_values_input):
         if sum(note_values) < time_signature[0]/time_signature[1]:
             note_values.append(time_signature[0]/time_signature[1] - sum(note_values))
@@ -85,18 +149,21 @@ def convert_bars(bars_input, note_values_input, bpm = 90, time_signature = (4, 4
     bars = np.full((len(bars_input), max([len(l) for l in bars_input])), None)
     for bar_index, bar in enumerate(bars_input):
         bars[bar_index, :len(bar)] = bar
+    if semitones != 0:
+        for index in np.ndindex(bars.shape):
+            bars[index] = semitone_shift(bars[index], semitones)
     note_values = np.full_like(bars, 0, dtype = float)
     for note_value_index, note_value in enumerate(note_values_input):
         note_values[note_value_index, :len(note_value)] = note_value
     note_durations = note_values*time_signature[1]*60/bpm
-    if semitones != 0:
-        for index in np.ndindex(bars.shape):
-            bars[index] = semitone_shift(bars[index], semitones)
-    return bars, note_durations
+    oscillator_types = np.full((len(oscillator_types_input), max([len(l) for l in oscillator_types_input])), None)
+    for oscillator_type_index, oscillator_type in enumerate(oscillator_types_input):
+        oscillator_types[oscillator_type_index, :len(oscillator_type)] = oscillator_type
+    return bars, note_durations, oscillator_types
 
-def generate_wave(bars, note_durations, envelope_params, sampling_rate):
+def generate_wave(bars, note_durations, oscillator_types, envelope_params, sampling_rate):
     total_samples = int(sampling_rate*note_durations.sum())
-    wave = np.concatenate([generate_pitch(note, note_durations[index], sampling_rate)*adsr(*envelope_params, note_durations[index], 1, sampling_rate) for index, note in np.ndenumerate(bars)])
+    wave = np.concatenate([generate_pitch(note, note_durations[index], oscillator_types[index], sampling_rate)*adsr(*envelope_params, note_durations[index], 1, sampling_rate) for index, note in np.ndenumerate(bars)])
     if wave.size < total_samples:
         wave = np.concatenate([wave, np.zeros((np.abs(wave.size - total_samples)))])
     elif wave.size > total_samples:
